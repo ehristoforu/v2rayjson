@@ -1,70 +1,152 @@
 import { ServerConfig, AppSettings } from '../types';
 
+function cleanObject(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(v => (v && typeof v === 'object' ? cleanObject(v) : v)).filter(v => v !== null && v !== undefined);
+  } else if (obj !== null && typeof obj === 'object') {
+    return Object.entries(obj).reduce((acc, [k, v]) => {
+      if (v !== null && v !== undefined) {
+        acc[k] = typeof v === 'object' ? cleanObject(v) : v;
+      }
+      return acc;
+    }, {} as any);
+  }
+  return obj;
+}
+
 export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
   const selectedServers = servers.filter(s => s.selected);
   if (selectedServers.length === 0) return '{\n  "message": "No servers selected"\n}';
 
+  const isBalancer = settings.balancerStrategy !== 'none' && selectedServers.length > 1;
   const dnsServers = settings.dnsServers.split(',').map(s => s.trim()).filter(s => s);
   
   const baseConfig: any = {
     dns: {
-      port: 53,
-      servers: dnsServers.length > 0 ? dnsServers : ["1.1.1.1", "8.8.8.8"],
-      queryStrategy: "UseIPv4"
+      hosts: {
+        "domain:googleapis.cn": "googleapis.com"
+      },
+      queryStrategy: "UseIPv4",
+      servers: dnsServers.length > 0 ? dnsServers : [
+        "1.1.1.1",
+        {
+          address: "1.1.1.1",
+          domains: [],
+          port: 53
+        },
+        {
+          address: "8.8.8.8",
+          domains: [],
+          port: 53
+        }
+      ]
     },
     inbounds: [
       {
-        tag: "socks",
-        port: settings.socksPort || 10808,
         listen: "127.0.0.1",
+        port: settings.socksPort || 10808,
         protocol: "socks",
         settings: {
+          auth: "noauth",
           udp: true,
-          auth: "noauth"
+          userLevel: 8
         },
         sniffing: {
-          enabled: true,
-          routeOnly: false,
-          destOverride: ["http", "tls", "quic"]
-        }
+          destOverride: ["http", "tls", "quic"],
+          enabled: true
+        },
+        tag: "socks"
       },
       {
-        tag: "http",
-        port: settings.httpPort || 10809,
         listen: "127.0.0.1",
+        port: settings.httpPort || 10809,
         protocol: "http",
         settings: {
-          allowTransparent: false
+          userLevel: 8
         },
         sniffing: {
-          enabled: true,
-          routeOnly: false,
-          destOverride: ["http", "tls", "quic"]
-        }
+          destOverride: ["http", "tls", "quic"],
+          enabled: true
+        },
+        tag: "http"
+      },
+      {
+        listen: "127.0.0.1",
+        port: 11111,
+        protocol: "dokodemo-door",
+        settings: {
+          address: "127.0.0.1"
+        },
+        tag: "metrics_in"
       }
     ],
+    log: {
+      loglevel: "warning"
+    },
+    metrics: {
+      tag: "metrics_out"
+    },
     outbounds: [],
+    policy: {
+      levels: {
+        "0": {
+          statsUserDownlink: true,
+          statsUserUplink: true
+        },
+        "8": {
+          connIdle: 300,
+          downlinkOnly: 1,
+          handshake: 4,
+          uplinkOnly: 1
+        }
+      },
+      system: {
+        statsInboundDownlink: true,
+        statsInboundUplink: true,
+        statsOutboundDownlink: true,
+        statsOutboundUplink: true
+      }
+    },
     remarks: settings.configRemarks || "Generated Config",
     routing: {
-      domainMatcher: "hybrid",
       domainStrategy: "IPIfNonMatch",
       rules: [
         {
-          type: "field",
-          protocol: ["bittorrent"],
-          outboundTag: "block"
+          inboundTag: ["metrics_in"],
+          outboundTag: "metrics_out"
+        },
+        {
+          inboundTag: ["socks"],
+          outboundTag: "proxy",
+          port: "53"
+        },
+        {
+          ip: ["1.1.1.1"],
+          outboundTag: "proxy",
+          port: "53"
+        },
+        {
+          ip: ["8.8.8.8"],
+          outboundTag: "direct",
+          port: "53"
         }
       ]
-    }
+    },
+    stats: {}
   };
 
   // Add outbounds
   selectedServers.forEach((server, index) => {
-    const tag = settings.balancerStrategy !== 'none' && selectedServers.length > 1 ? server.id : (index === 0 ? 'proxy' : `proxy-${index}`);
+    const tag = isBalancer ? server.id : (index === 0 ? 'proxy' : `proxy-${index}`);
     
     if (server.protocol === 'vless') {
       const outbound: any = {
-        tag: tag,
+        mux: {
+          concurrency: -1,
+          enabled: false,
+          xudpConcurrency: 8,
+          xudpProxyUDP443: ""
+        },
         protocol: "vless",
         settings: {
           vnext: [
@@ -73,9 +155,11 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
               port: server.port,
               users: [
                 {
-                  id: server.uuid,
+                  encryption: server.encryption || "none",
                   flow: server.flow || "",
-                  encryption: server.encryption || "none"
+                  id: server.uuid,
+                  level: 8,
+                  security: "auto"
                 }
               ]
             }
@@ -83,67 +167,111 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
         },
         streamSettings: {
           network: server.type || "tcp",
-          security: server.security || "none",
-        }
+          security: server.security || "none"
+        },
+        tag: tag
       };
 
       if (server.security === 'reality') {
         outbound.streamSettings.realitySettings = {
+          allowInsecure: false,
+          fingerprint: server.fp || "chrome",
           publicKey: server.pbk || "",
           serverName: server.sni || "",
-          fingerprint: server.fp || "chrome",
-          show: false,
           shortId: server.sid || "",
-          spiderX: server.spx || ""
+          show: false,
+          spiderX: server.spx || "/"
         };
       } else if (server.security === 'tls') {
         outbound.streamSettings.tlsSettings = {
+          allowInsecure: false,
+          fingerprint: server.fp || "chrome",
           serverName: server.sni || "",
-          fingerprint: server.fp || "chrome"
+          show: false
         };
       }
 
-      if (server.type === 'ws') {
+      if (server.type === 'tcp' || !server.type) {
+        outbound.streamSettings.tcpSettings = {
+          header: {
+            type: "none"
+          }
+        };
+      } else if (server.type === 'ws') {
         outbound.streamSettings.wsSettings = {
           path: server.spx || "/",
           headers: {
             Host: server.sni || ""
           }
         };
+      } else if (server.type === 'grpc') {
+        outbound.streamSettings.grpcSettings = {
+          serviceName: server.spx || "",
+          multiMode: false
+        };
       }
 
       baseConfig.outbounds.push(outbound);
     } else if (server.protocol === 'hysteria2') {
       const outbound: any = {
-        tag: tag,
-        protocol: "hysteria2",
+        mux: {
+          concurrency: -1,
+          enabled: false,
+          xudpConcurrency: 8,
+          xudpProxyUDP443: ""
+        },
+        protocol: "hysteria",
         settings: {
-          server: `${server.address}:${server.port}`,
-          password: server.uuid,
-          sni: server.sni || "",
-          insecure: server.insecure || false
-        }
+          address: server.address,
+          port: server.port,
+          version: 2
+        },
+        streamSettings: {
+          hysteriaSettings: {
+            auth: server.uuid,
+            version: 2
+          },
+          network: "hysteria",
+          security: "tls",
+          tlsSettings: {
+            allowInsecure: server.insecure || false,
+            alpn: ["h3"],
+            serverName: server.sni || "",
+            show: false
+          }
+        },
+        tag: tag
       };
+      
       if (server.obfs) {
         outbound.settings.obfs = server.obfs;
         outbound.settings.obfsPassword = server.obfsPassword || "";
       }
+      
       baseConfig.outbounds.push(outbound);
     }
   });
 
   // Direct and Block outbounds
   baseConfig.outbounds.push({
-    tag: "direct",
-    protocol: "freedom"
+    protocol: "freedom",
+    settings: {
+      domainStrategy: "UseIP"
+    },
+    tag: "direct"
   });
   baseConfig.outbounds.push({
-    tag: "block",
-    protocol: "blackhole"
+    protocol: "blackhole",
+    settings: {
+      response: {
+        type: "http"
+      }
+    },
+    tag: "block"
   });
 
   // Balancer setup
-  if (settings.balancerStrategy !== 'none' && selectedServers.length > 1) {
+  if (isBalancer) {
     const tags = selectedServers.map(s => s.id);
     
     baseConfig.burstObservatory = {
@@ -155,6 +283,21 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
         sampling: 4
       }
     };
+
+    baseConfig.routing.domainMatcher = "hybrid";
+    baseConfig.routing.rules = [
+      {
+        type: "field",
+        protocol: ["bittorrent"],
+        outboundTag: "block"
+      },
+      {
+        type: "field",
+        inboundTag: ["socks", "http"],
+        network: "tcp,udp",
+        balancerTag: "bal_main"
+      }
+    ];
 
     const balancer: any = {
       tag: "bal_main",
@@ -183,21 +326,9 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
     }
 
     baseConfig.routing.balancers = [balancer];
-    
-    baseConfig.routing.rules.push({
-      type: "field",
-      inboundTag: ["socks", "http"],
-      network: "tcp,udp",
-      balancerTag: "bal_main"
-    });
-  } else {
-    baseConfig.routing.rules.push({
-      type: "field",
-      inboundTag: ["socks", "http"],
-      network: "tcp,udp",
-      outboundTag: selectedServers.length > 0 ? (settings.balancerStrategy !== 'none' && selectedServers.length > 1 ? selectedServers[0].id : 'proxy') : "direct"
-    });
   }
 
-  return JSON.stringify(baseConfig, null, 2);
+  const cleanedConfig = cleanObject(baseConfig);
+  
+  return JSON.stringify(cleanedConfig, null, 2);
 }

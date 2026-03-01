@@ -20,7 +20,8 @@ export function parseSubscription(input: string): ServerConfig[] {
   lines.forEach((line, index) => {
     try {
       if (line.startsWith('vless://')) {
-        const url = new URL(line);
+        const urlStr = line.replace(/^vless:\/\//i, 'http://');
+        const url = new URL(urlStr);
         const uuid = url.username;
         const address = url.hostname;
         const port = parseInt(url.port || '443', 10);
@@ -47,7 +48,8 @@ export function parseSubscription(input: string): ServerConfig[] {
           spx: url.searchParams.get('spx') || '',
         });
       } else if (line.startsWith('hysteria2://') || line.startsWith('hy2://')) {
-        const url = new URL(line);
+        const urlStr = line.replace(/^(hysteria2|hy2):\/\//i, 'http://');
+        const url = new URL(urlStr);
         const uuid = url.username;
         const address = url.hostname;
         const port = parseInt(url.port || '443', 10);
