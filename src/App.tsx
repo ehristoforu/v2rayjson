@@ -7,7 +7,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { ServerConfig, AppSettings } from './types';
 import { parseSubscription } from './utils/parser';
 import { generateConfig } from './utils/generator';
-import { Settings, Server, Download, Copy, Trash2, Check, Plus, ChevronDown, ChevronUp, ArrowUp, ArrowDown, Edit2 } from 'lucide-react';
+import { Settings, Server, Download, Copy, Trash2, Check, Plus, ChevronDown, ChevronUp, ArrowUp, ArrowDown, Edit2, X, Save } from 'lucide-react';
 
 export default function App() {
   const [input, setInput] = useState('');
@@ -28,7 +28,37 @@ export default function App() {
     leastLoadMaxRTT: '6s'
   });
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [editingServer, setEditingServer] = useState<ServerConfig | null>(null);
+  const [editRawInput, setEditRawInput] = useState('');
+  const [editRemarks, setEditRemarks] = useState('');
+
+  const handleStartEdit = useCallback((server: ServerConfig) => {
+    setEditingServer(server);
+    setEditRawInput(server.raw || '');
+    setEditRemarks(server.remarks);
+  }, []);
+
+  const handleSaveEdit = useCallback(() => {
+    if (!editingServer) return;
+    
+    // Parse the new raw input to get technical details
+    const parsed = parseSubscription(editRawInput);
+    if (parsed.length > 0) {
+      const newDetails = parsed[0];
+      const updated: ServerConfig = {
+        ...newDetails,
+        id: editingServer.id, // Preserve original ID
+        remarks: editRemarks, // Use the remarks from the edit field
+        selected: editingServer.selected, // Preserve selection state
+      };
+      setServers(prev => prev.map(s => s.id === updated.id ? updated : s));
+      setEditingServer(null);
+    } else {
+      alert('Не удалось распознать ссылку или конфиг. Проверьте формат.');
+    }
+  }, [editingServer, editRawInput, editRemarks]);
 
   const handleParse = useCallback(() => {
     const parsed = parseSubscription(input);
@@ -56,10 +86,6 @@ export default function App() {
     });
   }, []);
 
-  const updateRemark = useCallback((id: string, newRemark: string) => {
-    setServers(prev => prev.map(s => s.id === id ? { ...s, remarks: newRemark } : s));
-  }, []);
-
   const generatedConfigs = useMemo(() => generateConfig(servers, settings), [servers, settings]);
 
   const handleCopy = useCallback((text: string, index: number) => {
@@ -67,6 +93,13 @@ export default function App() {
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);
   }, []);
+
+  const handleCopyAll = useCallback(() => {
+    const allText = generatedConfigs.join('\n\n');
+    navigator.clipboard.writeText(allText);
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
+  }, [generatedConfigs]);
 
   const handleDownload = useCallback((text: string, index: number) => {
     const blob = new Blob([text], { type: 'application/json' });
@@ -90,7 +123,7 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
           <div className="space-y-12">
             
-            {/* Input Section */}
+            {/* Секция ввода */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-medium flex items-center gap-2" title="Вставьте сюда ваши ссылки или конфиги">
@@ -114,7 +147,7 @@ export default function App() {
               </button>
             </section>
 
-            {/* Settings Section */}
+            {/* Секция настроек */}
             <section className="space-y-6">
               <h2 className="text-lg font-medium flex items-center gap-2" title="Настройки итогового JSON конфига">
                 <Settings className="w-4 h-4" /> Настройки конфигурации
@@ -197,7 +230,7 @@ export default function App() {
                       <div className="mt-4 space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="URL для проверки пинга">Ping Dest</label>
+                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="URL для проверки пинга">Адрес проверки (Ping Dest)</label>
                             <input
                               type="text"
                               value={settings.pingDestination}
@@ -206,7 +239,7 @@ export default function App() {
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Интервал между проверками">Ping Interval</label>
+                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Интервал между проверками">Интервал (Ping Interval)</label>
                             <input
                               type="text"
                               value={settings.pingInterval}
@@ -215,7 +248,7 @@ export default function App() {
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Таймаут проверки">Ping Timeout</label>
+                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Таймаут проверки">Таймаут (Ping Timeout)</label>
                             <input
                               type="text"
                               value={settings.pingTimeout}
@@ -224,7 +257,7 @@ export default function App() {
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Количество проверок для усреднения">Ping Sampling</label>
+                            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Количество проверок для усреднения">Выборка (Ping Sampling)</label>
                             <input
                               type="number"
                               value={settings.pingSampling}
@@ -237,7 +270,7 @@ export default function App() {
                         {settings.balancerStrategy === 'leastLoad' && (
                           <div className="grid grid-cols-3 gap-4 pt-2">
                             <div>
-                              <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Базовые значения RTT">Baselines</label>
+                              <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Базовые значения RTT">База (Baselines)</label>
                               <input
                                 type="text"
                                 value={settings.leastLoadBaselines}
@@ -246,7 +279,7 @@ export default function App() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Ожидаемое количество узлов">Expected</label>
+                              <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Ожидаемое количество узлов">Ожидание (Expected)</label>
                               <input
                                 type="number"
                                 value={settings.leastLoadExpected}
@@ -255,7 +288,7 @@ export default function App() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Максимальный RTT">Max RTT</label>
+                              <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-1" title="Максимальный RTT">Макс RTT</label>
                               <input
                                 type="text"
                                 value={settings.leastLoadMaxRTT}
@@ -276,7 +309,7 @@ export default function App() {
 
           <div className="space-y-12">
             
-            {/* Servers List */}
+            {/* Список серверов */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-medium flex items-center gap-2" title="Список добавленных серверов">
@@ -333,14 +366,9 @@ export default function App() {
                             {server.protocol}
                           </span>
                           <div className="flex-1 flex items-center gap-2 group">
-                            <input
-                              type="text"
-                              value={server.remarks}
-                              onChange={(e) => updateRemark(server.id, e.target.value)}
-                              className="bg-transparent border-b border-transparent hover:border-white/20 focus:border-white/50 focus:outline-none text-sm font-medium truncate w-full transition-colors"
-                              title="Нажмите, чтобы изменить название сервера"
-                            />
-                            <Edit2 className="w-3 h-3 text-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            <span className="text-sm font-medium truncate w-full">
+                              {server.remarks}
+                            </span>
                           </div>
                         </div>
                         <div 
@@ -352,6 +380,13 @@ export default function App() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => handleStartEdit(server)}
+                          className="w-8 h-8 flex items-center justify-center text-white/30 hover:text-white transition-colors"
+                          title="Редактировать параметры сервера"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
                         <button 
                           onClick={() => toggleServer(server.id)}
                           className={`w-6 h-6 rounded-full border flex items-center justify-center transition-colors ${
@@ -375,10 +410,20 @@ export default function App() {
               </div>
             </section>
 
-            {/* Output Section */}
+            {/* Секция вывода */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-medium" title="Сгенерированные JSON конфигурации">Готовый JSON</h2>
+                {generatedConfigs.length > 1 && (
+                  <button 
+                    onClick={handleCopyAll}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2"
+                    title="Скопировать все конфиги одним блоком"
+                  >
+                    {copiedAll ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedAll ? 'Скопировано!' : 'Копировать всё'}
+                  </button>
+                )}
               </div>
               
               <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
@@ -411,6 +456,57 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Модальное окно редактирования */}
+      {editingServer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-xl font-medium">Редактирование сервера</h3>
+              <button onClick={() => setEditingServer(null)} className="text-white/50 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="space-y-1">
+                <label className="text-[10px] text-white/40 uppercase tracking-wider">Название (Remarks)</label>
+                <input
+                  type="text"
+                  value={editRemarks}
+                  onChange={e => setEditRemarks(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors"
+                  placeholder="Введите название сервера..."
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] text-white/40 uppercase tracking-wider">Новая ссылка или JSON</label>
+                <textarea
+                  value={editRawInput}
+                  onChange={e => setEditRawInput(e.target.value)}
+                  className="w-full h-40 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono resize-none"
+                  placeholder="Вставьте vless://, hy2:// или JSON конфиг..."
+                />
+                <p className="text-[10px] text-white/30">Вставьте новую ссылку, чтобы обновить технические параметры сервера, сохранив его название.</p>
+              </div>
+            </div>
+            <div className="p-6 border-t border-white/10 bg-white/5 flex gap-3">
+              <button 
+                onClick={() => setEditingServer(null)}
+                className="flex-1 py-2 rounded-xl border border-white/10 hover:bg-white/5 transition-colors text-sm font-medium"
+              >
+                Отмена
+              </button>
+              <button 
+                onClick={handleSaveEdit}
+                className="flex-1 py-2 rounded-xl bg-white text-black hover:bg-white/90 transition-colors text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <Save className="w-4 h-4" /> Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
