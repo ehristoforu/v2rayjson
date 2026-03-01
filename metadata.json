@@ -1,0 +1,5 @@
+{
+  "name": "Happ Config Converter",
+  "description": "Convert VLESS/Hysteria links and subscriptions to Happ JSON config with load balancing support.",
+  "requestFramePermissions": []
+}
