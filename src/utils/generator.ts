@@ -14,14 +14,14 @@ function cleanObject(obj: any): any {
   return obj;
 }
 
-export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
+export function generateConfig(servers: ServerConfig[], settings: AppSettings): string[] {
   const selectedServers = servers.filter(s => s.selected);
-  if (selectedServers.length === 0) return '{\n  "message": "No servers selected"\n}';
+  if (selectedServers.length === 0) return ['{\n  "message": "No servers selected"\n}'];
 
   const isBalancer = settings.balancerStrategy !== 'none' && selectedServers.length > 1;
   const dnsServers = settings.dnsServers.split(',').map(s => s.trim()).filter(s => s);
   
-  const baseConfig: any = {
+  const createBaseConfig = (remarks: string) => ({
     dns: {
       hosts: {
         "domain:googleapis.cn": "googleapis.com"
@@ -86,7 +86,7 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
     metrics: {
       tag: "metrics_out"
     },
-    outbounds: [],
+    outbounds: [] as any[],
     policy: {
       levels: {
         "0": {
@@ -107,7 +107,7 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
         statsOutboundUplink: true
       }
     },
-    remarks: settings.configRemarks || "Generated Config",
+    remarks: remarks || "Generated Config",
     routing: {
       domainStrategy: "IPIfNonMatch",
       rules: [
@@ -133,12 +133,9 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
       ]
     },
     stats: {}
-  };
+  });
 
-  // Add outbounds
-  selectedServers.forEach((server, index) => {
-    const tag = isBalancer ? server.id : (index === 0 ? 'proxy' : `proxy-${index}`);
-    
+  const createOutbound = (server: ServerConfig, tag: string) => {
     if (server.protocol === 'vless') {
       const outbound: any = {
         mux: {
@@ -210,8 +207,7 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
           multiMode: false
         };
       }
-
-      baseConfig.outbounds.push(outbound);
+      return outbound;
     } else if (server.protocol === 'hysteria2') {
       const outbound: any = {
         mux: {
@@ -247,88 +243,107 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings) {
         outbound.settings.obfs = server.obfs;
         outbound.settings.obfsPassword = server.obfsPassword || "";
       }
-      
-      baseConfig.outbounds.push(outbound);
+      return outbound;
     }
-  });
+    return null;
+  };
 
-  // Direct and Block outbounds
-  baseConfig.outbounds.push({
-    protocol: "freedom",
-    settings: {
-      domainStrategy: "UseIP"
-    },
-    tag: "direct"
-  });
-  baseConfig.outbounds.push({
-    protocol: "blackhole",
-    settings: {
-      response: {
-        type: "http"
-      }
-    },
-    tag: "block"
-  });
-
-  // Balancer setup
-  if (isBalancer) {
-    const tags = selectedServers.map(s => s.id);
-    
-    baseConfig.burstObservatory = {
-      subjectSelector: tags,
-      pingConfig: {
-        destination: "http://www.gstatic.com/generate_204",
-        interval: "15s",
-        timeout: "5s",
-        sampling: 4
-      }
-    };
-
-    baseConfig.routing.domainMatcher = "hybrid";
-    baseConfig.routing.rules = [
-      {
-        type: "field",
-        protocol: ["bittorrent"],
-        outboundTag: "block"
+  const addDirectAndBlock = (config: any) => {
+    config.outbounds.push({
+      protocol: "freedom",
+      settings: {
+        domainStrategy: "UseIP"
       },
-      {
-        type: "field",
-        inboundTag: ["socks", "http"],
-        network: "tcp,udp",
-        balancerTag: "bal_main"
-      }
-    ];
-
-    const balancer: any = {
-      tag: "bal_main",
-      selector: tags,
-      fallbackTag: tags[tags.length - 1]
-    };
-
-    if (settings.balancerStrategy === 'leastLoad') {
-      balancer.strategy = {
-        type: "leastLoad",
-        settings: {
-          baselines: ["4s"],
-          costs: tags.map((tag, i) => ({
-            match: tag,
-            regexp: false,
-            value: i * 100000000
-          })),
-          expected: 1,
-          maxRTT: "6s"
+      tag: "direct"
+    });
+    config.outbounds.push({
+      protocol: "blackhole",
+      settings: {
+        response: {
+          type: "http"
         }
-      };
-    } else if (settings.balancerStrategy === 'leastPing') {
-      balancer.strategy = {
-        type: "leastPing"
-      };
-    }
+      },
+      tag: "block"
+    });
+  };
 
-    baseConfig.routing.balancers = [balancer];
+  if (!isBalancer) {
+    // Generate one config per server
+    return selectedServers.map(server => {
+      const config = createBaseConfig(server.remarks || settings.configRemarks);
+      const outbound = createOutbound(server, 'proxy');
+      if (outbound) config.outbounds.push(outbound);
+      addDirectAndBlock(config);
+      return JSON.stringify(cleanObject(config), null, 2);
+    });
   }
 
-  const cleanedConfig = cleanObject(baseConfig);
+  // Generate single config with balancer
+  const baseConfig = createBaseConfig(settings.configRemarks);
   
-  return JSON.stringify(cleanedConfig, null, 2);
+  selectedServers.forEach((server, index) => {
+    const tag = server.id;
+    const outbound = createOutbound(server, tag);
+    if (outbound) baseConfig.outbounds.push(outbound);
+  });
+
+  addDirectAndBlock(baseConfig);
+
+  const tags = selectedServers.map(s => s.id);
+  
+  baseConfig.burstObservatory = {
+    subjectSelector: tags,
+    pingConfig: {
+      destination: settings.pingDestination || "http://www.gstatic.com/generate_204",
+      interval: settings.pingInterval || "15s",
+      timeout: settings.pingTimeout || "5s",
+      sampling: settings.pingSampling || 4
+    }
+  };
+
+  baseConfig.routing.domainMatcher = "hybrid";
+  baseConfig.routing.rules = [
+    {
+      type: "field",
+      protocol: ["bittorrent"],
+      outboundTag: "block"
+    },
+    {
+      type: "field",
+      inboundTag: ["socks", "http"],
+      network: "tcp,udp",
+      balancerTag: "bal_main"
+    },
+    ...baseConfig.routing.rules
+  ];
+
+  const balancer: any = {
+    tag: "bal_main",
+    selector: tags,
+    fallbackTag: tags[tags.length - 1]
+  };
+
+  if (settings.balancerStrategy === 'leastLoad') {
+    balancer.strategy = {
+      type: "leastLoad",
+      settings: {
+        baselines: (settings.leastLoadBaselines || "4s").split(',').map(s => s.trim()),
+        costs: tags.map((tag, i) => ({
+          match: tag,
+          regexp: false,
+          value: i * 100000000
+        })),
+        expected: settings.leastLoadExpected || 1,
+        maxRTT: settings.leastLoadMaxRTT || "6s"
+      }
+    };
+  } else if (settings.balancerStrategy === 'leastPing') {
+    balancer.strategy = {
+      type: "leastPing"
+    };
+  }
+
+  baseConfig.routing.balancers = [balancer];
+
+  return [JSON.stringify(cleanObject(baseConfig), null, 2)];
 }

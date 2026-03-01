@@ -35,4 +35,15 @@ export interface AppSettings {
   routingRules: string;
   balancerStrategy: 'leastLoad' | 'leastPing' | 'none';
   configRemarks: string;
+  
+  // Balancer Ping Config
+  pingDestination: string;
+  pingInterval: string;
+  pingTimeout: string;
+  pingSampling: number;
+  
+  // Balancer Strategy Settings (leastLoad)
+  leastLoadBaselines: string;
+  leastLoadExpected: number;
+  leastLoadMaxRTT: string;
 }
