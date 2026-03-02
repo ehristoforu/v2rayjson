@@ -21,7 +21,7 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings): 
   const isBalancer = settings.balancerStrategy !== 'none' && selectedServers.length > 1;
   const dnsServers = settings.dnsServers.split(',').map(s => s.trim()).filter(s => s);
   
-  const createBaseConfig = (remarks: string) => ({
+  const createBaseConfig = (remarks: string, serverDescription?: string) => ({
     dns: {
       hosts: {
         "domain:googleapis.cn": "googleapis.com"
@@ -86,6 +86,9 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings): 
     metrics: {
       tag: "metrics_out"
     },
+    meta: {
+      serverDescription: serverDescription || ""
+    },
     outbounds: [] as any[],
     policy: {
       levels: {
@@ -136,37 +139,41 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings): 
   });
 
   const createOutbound = (server: ServerConfig, tag: string) => {
+    const outbound: any = {
+      tag: tag,
+      meta: {
+        serverDescription: server.serverDescription || ""
+      }
+    };
+
     if (server.protocol === 'vless') {
-      const outbound: any = {
-        mux: {
-          concurrency: -1,
-          enabled: false,
-          xudpConcurrency: 8,
-          xudpProxyUDP443: ""
-        },
-        protocol: "vless",
-        settings: {
-          vnext: [
-            {
-              address: server.address,
-              port: server.port,
-              users: [
-                {
-                  encryption: server.encryption || "none",
-                  flow: server.flow || "",
-                  id: server.uuid,
-                  level: 8,
-                  security: "auto"
-                }
-              ]
-            }
-          ]
-        },
-        streamSettings: {
-          network: server.type || "tcp",
-          security: server.security || "none"
-        },
-        tag: tag
+      outbound.mux = {
+        concurrency: -1,
+        enabled: false,
+        xudpConcurrency: 8,
+        xudpProxyUDP443: ""
+      };
+      outbound.protocol = "vless";
+      outbound.settings = {
+        vnext: [
+          {
+            address: server.address,
+            port: server.port,
+            users: [
+              {
+                encryption: server.encryption || "none",
+                flow: server.flow || "",
+                id: server.uuid,
+                level: 8,
+                security: "auto"
+              }
+            ]
+          }
+        ]
+      };
+      outbound.streamSettings = {
+        network: server.type || "tcp",
+        security: server.security || "none"
       };
 
       if (server.security === 'reality') {
@@ -207,42 +214,62 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings): 
           multiMode: false
         };
       }
+
+      // Fragmentation & Noises
+      if (server.fragment) {
+        const parts = server.fragment.split(',');
+        outbound.settings.fragment = {
+          length: parts[0] || "10-20",
+          interval: parts[1] || "10-20",
+          packets: parts[2] || "tlshello"
+        };
+      }
+
       return outbound;
     } else if (server.protocol === 'hysteria2') {
-      const outbound: any = {
-        mux: {
-          concurrency: -1,
-          enabled: false,
-          xudpConcurrency: 8,
-          xudpProxyUDP443: ""
-        },
-        protocol: "hysteria",
-        settings: {
-          address: server.address,
-          port: server.port,
+      outbound.mux = {
+        concurrency: -1,
+        enabled: false,
+        xudpConcurrency: 8,
+        xudpProxyUDP443: ""
+      };
+      outbound.protocol = "hysteria";
+      outbound.settings = {
+        address: server.address,
+        port: server.port,
+        version: 2,
+        mportHopInt: server.mportHopInt || 0
+      };
+      outbound.streamSettings = {
+        hysteriaSettings: {
+          auth: server.uuid,
           version: 2
         },
-        streamSettings: {
-          hysteriaSettings: {
-            auth: server.uuid,
-            version: 2
-          },
-          network: "hysteria",
-          security: "tls",
-          tlsSettings: {
-            allowInsecure: server.insecure || false,
-            alpn: ["h3"],
-            serverName: server.sni || "",
-            show: false
-          }
-        },
-        tag: tag
+        network: "hysteria",
+        security: "tls",
+        tlsSettings: {
+          allowInsecure: server.insecure || false,
+          alpn: ["h3"],
+          serverName: server.sni || "",
+          show: false
+        }
       };
       
       if (server.obfs) {
         outbound.settings.obfs = server.obfs;
         outbound.settings.obfsPassword = server.obfsPassword || "";
       }
+      return outbound;
+    } else if (server.protocol === 'socks') {
+      outbound.protocol = "socks";
+      const [user, pass] = server.uuid.split(':');
+      outbound.settings = {
+        servers: [{
+          address: server.address,
+          port: server.port,
+          users: user ? [{ user, pass: pass || "" }] : []
+        }]
+      };
       return outbound;
     }
     return null;
@@ -270,7 +297,7 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings): 
   if (!isBalancer) {
     // Generate one config per server
     return selectedServers.map(server => {
-      const config = createBaseConfig(server.remarks || settings.configRemarks);
+      const config = createBaseConfig(server.remarks || settings.configRemarks, server.serverDescription);
       const outbound = createOutbound(server, 'proxy');
       if (outbound) config.outbounds.push(outbound);
       addDirectAndBlock(config);
@@ -279,7 +306,7 @@ export function generateConfig(servers: ServerConfig[], settings: AppSettings): 
   }
 
   // Generate single config with balancer
-  const baseConfig = createBaseConfig(settings.configRemarks);
+  const baseConfig: any = createBaseConfig(settings.configRemarks);
   
   selectedServers.forEach((server, index) => {
     const tag = server.id;

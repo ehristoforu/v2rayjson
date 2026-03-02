@@ -1,5 +1,5 @@
 {
-  "name": "Happ Config Converter",
-  "description": "Convert VLESS/Hysteria links and subscriptions to Happ JSON config with load balancing support.",
+  "name": "Happ Config Studio",
+  "description": "Профессиональная студия для создания и управления JSON конфигурациями и подписками для приложения Happ. Поддержка VLESS, Hysteria2, Socks5, балансировки нагрузки и DPI параметров.",
   "requestFramePermissions": []
 }

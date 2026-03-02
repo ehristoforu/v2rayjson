@@ -1,11 +1,13 @@
 export interface ServerConfig {
   id: string;
   raw: string;
-  protocol: 'vless' | 'hysteria2' | 'unknown';
+  protocol: 'vless' | 'hysteria2' | 'socks' | 'unknown';
   address: string;
   port: number;
   remarks: string;
-  uuid: string;
+  serverDescription?: string;
+  uuid: string; // auth for hysteria2/socks
+  selected: boolean;
   
   // VLESS
   security?: string;
@@ -24,8 +26,11 @@ export interface ServerConfig {
   obfsPassword?: string;
   insecure?: boolean;
   pinSHA256?: string;
-  
-  selected: boolean;
+  mportHopInt?: number;
+
+  // Advanced (DPI)
+  fragment?: string;
+  noises?: string;
 }
 
 export interface AppSettings {

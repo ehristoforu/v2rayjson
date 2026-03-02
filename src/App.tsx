@@ -34,31 +34,48 @@ export default function App() {
   const [editRawInput, setEditRawInput] = useState('');
   const [editRemarks, setEditRemarks] = useState('');
 
+  const [editTab, setEditTab] = useState<'link' | 'manual'>('link');
+  const [editFields, setEditFields] = useState<Partial<ServerConfig>>({});
+
   const handleStartEdit = useCallback((server: ServerConfig) => {
     setEditingServer(server);
     setEditRawInput(server.raw || '');
     setEditRemarks(server.remarks);
+    setEditFields({ ...server });
+    setEditTab('link');
   }, []);
 
   const handleSaveEdit = useCallback(() => {
     if (!editingServer) return;
     
-    // Parse the new raw input to get technical details
-    const parsed = parseSubscription(editRawInput);
-    if (parsed.length > 0) {
-      const newDetails = parsed[0];
-      const updated: ServerConfig = {
-        ...newDetails,
-        id: editingServer.id, // Preserve original ID
-        remarks: editRemarks, // Use the remarks from the edit field
-        selected: editingServer.selected, // Preserve selection state
-      };
-      setServers(prev => prev.map(s => s.id === updated.id ? updated : s));
-      setEditingServer(null);
+    let updated: ServerConfig;
+
+    if (editTab === 'link') {
+      const parsed = parseSubscription(editRawInput);
+      if (parsed.length > 0) {
+        const newDetails = parsed[0];
+        updated = {
+          ...newDetails,
+          id: editingServer.id,
+          remarks: editRemarks,
+          selected: editingServer.selected,
+        };
+      } else {
+        alert('Не удалось распознать ссылку или конфиг. Проверьте формат.');
+        return;
+      }
     } else {
-      alert('Не удалось распознать ссылку или конфиг. Проверьте формат.');
+      updated = {
+        ...editingServer,
+        ...editFields,
+        remarks: editRemarks,
+        id: editingServer.id,
+      } as ServerConfig;
     }
-  }, [editingServer, editRawInput, editRemarks]);
+
+    setServers(prev => prev.map(s => s.id === updated.id ? updated : s));
+    setEditingServer(null);
+  }, [editingServer, editRawInput, editRemarks, editTab, editFields]);
 
   const handleParse = useCallback(() => {
     const parsed = parseSubscription(input);
@@ -94,11 +111,22 @@ export default function App() {
     setTimeout(() => setCopiedIndex(null), 2000);
   }, []);
 
-  const handleCopyAll = useCallback(() => {
-    const allText = generatedConfigs.join('\n\n');
-    navigator.clipboard.writeText(allText);
+  const handleCopySubscription = useCallback(() => {
+    const subscription = `[\n${generatedConfigs.join(',\n')}\n]`;
+    navigator.clipboard.writeText(subscription);
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 2000);
+  }, [generatedConfigs]);
+
+  const handleDownloadSubscription = useCallback(() => {
+    const subscription = `[\n${generatedConfigs.join(',\n')}\n]`;
+    const blob = new Blob([subscription], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `subscription.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }, [generatedConfigs]);
 
   const handleDownload = useCallback((text: string, index: number) => {
@@ -116,8 +144,8 @@ export default function App() {
       <div className="max-w-5xl mx-auto p-6 space-y-12">
         
         <header className="border-b border-white/10 pb-6 pt-12">
-          <h1 className="text-4xl font-medium tracking-tight">Конвертер конфигов Happ</h1>
-          <p className="text-white/50 mt-2 text-sm">Конвертируйте ссылки VLESS/Hysteria2 и JSON в единый конфиг с балансировкой нагрузки.</p>
+          <h1 className="text-4xl font-medium tracking-tight">Happ Config Studio</h1>
+          <p className="text-white/50 mt-2 text-sm">Профессиональная студия для создания JSON подписок, балансировщиков и ключей Happ.</p>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
@@ -365,10 +393,15 @@ export default function App() {
                           }`}>
                             {server.protocol}
                           </span>
-                          <div className="flex-1 flex items-center gap-2 group">
-                            <span className="text-sm font-medium truncate w-full">
+                          <div className="flex-1 flex flex-col min-w-0">
+                            <span className="text-sm font-medium truncate">
                               {server.remarks}
                             </span>
+                            {server.serverDescription && (
+                              <span className="text-[10px] text-white/30 truncate italic">
+                                {server.serverDescription}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div 
@@ -413,17 +446,29 @@ export default function App() {
             {/* Секция вывода */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-medium" title="Сгенерированные JSON конфигурации">Готовый JSON</h2>
-                {generatedConfigs.length > 1 && (
-                  <button 
-                    onClick={handleCopyAll}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2"
-                    title="Скопировать все конфиги одним блоком"
-                  >
-                    {copiedAll ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copiedAll ? 'Скопировано!' : 'Копировать всё'}
-                  </button>
-                )}
+                <h2 className="text-lg font-medium" title="Сгенерированные JSON конфигурации">Результат (JSON)</h2>
+                <div className="flex gap-2">
+                  {generatedConfigs.length > 0 && (
+                    <>
+                      <button 
+                        onClick={handleCopySubscription}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2"
+                        title="Скопировать все конфиги как один JSON массив (подписка)"
+                      >
+                        {copiedAll ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedAll ? 'Готово!' : 'Копировать подписку'}
+                      </button>
+                      <button 
+                        onClick={handleDownloadSubscription}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2"
+                        title="Скачать все конфиги как один JSON файл (подписка)"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Скачать подписку
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               
               <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
@@ -460,35 +505,197 @@ export default function App() {
       {/* Модальное окно редактирования */}
       {editingServer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+          <div className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
             <div className="p-6 border-b border-white/10 flex items-center justify-between">
               <h3 className="text-xl font-medium">Редактирование сервера</h3>
               <button onClick={() => setEditingServer(null)} className="text-white/50 hover:text-white transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-6">
-              <div className="space-y-1">
-                <label className="text-[10px] text-white/40 uppercase tracking-wider">Название (Remarks)</label>
-                <input
-                  type="text"
-                  value={editRemarks}
-                  onChange={e => setEditRemarks(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors"
-                  placeholder="Введите название сервера..."
-                />
+            
+            <div className="flex border-b border-white/10">
+              <button 
+                onClick={() => setEditTab('link')}
+                className={`flex-1 py-3 text-xs font-medium transition-colors ${editTab === 'link' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
+              >
+                Вставить ссылку/JSON
+              </button>
+              <button 
+                onClick={() => setEditTab('manual')}
+                className={`flex-1 py-3 text-xs font-medium transition-colors ${editTab === 'manual' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
+              >
+                Ручная настройка
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] text-white/40 uppercase tracking-wider">Название (Remarks)</label>
+                  <input
+                    type="text"
+                    value={editRemarks}
+                    onChange={e => setEditRemarks(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors"
+                    placeholder="Название сервера..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-white/40 uppercase tracking-wider">Описание (Meta Description)</label>
+                  <input
+                    type="text"
+                    value={editFields.serverDescription || ''}
+                    onChange={e => setEditFields({...editFields, serverDescription: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors"
+                    placeholder="Доп. описание..."
+                  />
+                </div>
               </div>
-              
-              <div className="space-y-1">
-                <label className="text-[10px] text-white/40 uppercase tracking-wider">Новая ссылка или JSON</label>
-                <textarea
-                  value={editRawInput}
-                  onChange={e => setEditRawInput(e.target.value)}
-                  className="w-full h-40 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono resize-none"
-                  placeholder="Вставьте vless://, hy2:// или JSON конфиг..."
-                />
-                <p className="text-[10px] text-white/30">Вставьте новую ссылку, чтобы обновить технические параметры сервера, сохранив его название.</p>
-              </div>
+
+              {editTab === 'link' ? (
+                <div className="space-y-1">
+                  <label className="text-[10px] text-white/40 uppercase tracking-wider">Ссылка или JSON</label>
+                  <textarea
+                    value={editRawInput}
+                    onChange={e => setEditRawInput(e.target.value)}
+                    className="w-full h-48 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono resize-none"
+                    placeholder="Вставьте vless://, hy2://, socks:// или JSON конфиг..."
+                  />
+                  <p className="text-[10px] text-white/30">Вставьте новую ссылку, чтобы обновить технические параметры сервера.</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-white/40 uppercase tracking-wider">Протокол</label>
+                      <select 
+                        value={editFields.protocol}
+                        onChange={e => setEditFields({...editFields, protocol: e.target.value as any})}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors"
+                      >
+                        <option value="vless">VLESS</option>
+                        <option value="hysteria2">Hysteria2</option>
+                        <option value="socks">Socks5</option>
+                      </select>
+                    </div>
+                    <div className="col-span-2 space-y-1">
+                      <label className="text-[10px] text-white/40 uppercase tracking-wider">Адрес</label>
+                      <input
+                        type="text"
+                        value={editFields.address || ''}
+                        onChange={e => setEditFields({...editFields, address: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-white/40 uppercase tracking-wider">Порт</label>
+                      <input
+                        type="number"
+                        value={editFields.port || 0}
+                        onChange={e => setEditFields({...editFields, port: parseInt(e.target.value) || 0})}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                      />
+                    </div>
+                    <div className="col-span-2 space-y-1">
+                      <label className="text-[10px] text-white/40 uppercase tracking-wider">UUID / Пароль / Auth</label>
+                      <input
+                        type="text"
+                        value={editFields.uuid || ''}
+                        onChange={e => setEditFields({...editFields, uuid: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {editFields.protocol === 'vless' && (
+                    <div className="space-y-4 pt-4 border-t border-white/10">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider">Безопасность</label>
+                          <select 
+                            value={editFields.security}
+                            onChange={e => setEditFields({...editFields, security: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors"
+                          >
+                            <option value="none">None</option>
+                            <option value="tls">TLS</option>
+                            <option value="reality">Reality</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider">SNI / Host</label>
+                          <input
+                            type="text"
+                            value={editFields.sni || ''}
+                            onChange={e => setEditFields({...editFields, sni: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider">Фрагментация (length,interval,packets)</label>
+                          <input
+                            type="text"
+                            value={editFields.fragment || ''}
+                            onChange={e => setEditFields({...editFields, fragment: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                            placeholder="1-10,5-20,tlshello"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider">Шумы (type,packet,delay,applyTo)</label>
+                          <input
+                            type="text"
+                            value={editFields.noises || ''}
+                            onChange={e => setEditFields({...editFields, noises: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                            placeholder="rand,50-150,10-50,ip"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {editFields.protocol === 'hysteria2' && (
+                    <div className="space-y-4 pt-4 border-t border-white/10">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider">Obfs Type</label>
+                          <input
+                            type="text"
+                            value={editFields.obfs || ''}
+                            onChange={e => setEditFields({...editFields, obfs: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                            placeholder="salamander"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider">Obfs Password</label>
+                          <input
+                            type="text"
+                            value={editFields.obfsPassword || ''}
+                            onChange={e => setEditFields({...editFields, obfsPassword: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-white/40 uppercase tracking-wider">Multi-port Hop Int (sec)</label>
+                        <input
+                          type="number"
+                          value={editFields.mportHopInt || 0}
+                          onChange={e => setEditFields({...editFields, mportHopInt: parseInt(e.target.value) || 0})}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white transition-colors font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="p-6 border-t border-white/10 bg-white/5 flex gap-3">
               <button 
